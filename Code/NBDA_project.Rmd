@@ -1,0 +1,1002 @@
+---
+title: "Network Based Data Analysis project"
+author: "Andrea Tonina"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+Loading libraries
+```{r}
+library(GEOquery)
+library(biomaRt)
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(plotly)
+library(tibble)
+library(sva)
+library(factoextra)
+library(plotly)
+library(cluster)
+library(umap)
+library(dendextend)
+library(limma)
+library(ggplot2)
+library(ggpubr)
+library(randomForest)
+library(caret)
+
+```
+Importing the data 
+ 
+I geni sono in RefSeq transcript ID! Keep in mind 
+```{r}
+gse <- getGEO('GSE110225', destdir= '.', getGPL = F)
+# GSE110225 is a SuperSeries, which is composed by GSE110223 (13 samples of colon rectal cancer and 13 samples of control ) and GSE110224 (17 samples of colon rectal cancer and 17 samples of control )
+
+gse_1 <- gse[[1]]
+gse_2 <- gse[[2]]
+
+GSE110224 <- exprs(gse_1)
+GSE110223 <- exprs(gse_2)
+
+
+```
+
+
+Let's take a first glance of the data through a boxplots 
+```{r}
+# first for GSE110223
+dim(GSE110223) # 22283 GENES,26 SAMPLES between tumoral and control 
+colnames(GSE110223) #-> ids of the samples
+rownames(GSE110223) # -> gene name, here in RefSeq if I'm not wrong -> needs to be changed? 
+
+# Then for GSE110224
+dim(GSE110224) # 54675 GENES, 34 SAMPLES between tumoral and control 
+colnames(GSE110224) #-> ids of the samples
+rownames(GSE110224) # -> gene name, here in RefSeq if I'm not wrong -> needs to be changed? 
+
+#! The two datasets have different number of genes, so need to select just the ones that match between the two!
+
+# and then plot them 
+boxplot(GSE110223, main = 'Boxplot of initial data GSE110223', col = c('#6aaa96','#de425b'), xlab = 'samples',ylab='values')
+legend('bottomright',legend = c('Tumor','Control'),fill =c('#de425b','#6aaa96') , cex = 0.8)
+
+boxplot(GSE110224, main = 'Boxplot of initial data GSE110224',col = c('#6aaa96','#de425b'), xlab = 'samples',ylab='values')
+legend('bottomright',legend = c('Tumor','Control'),fill =c('#de425b','#6aaa96') , cex = 0.8)
+
+
+```
+
+Now extract and differentiate the samples (because are alternated between tumor and controls and create a dataset that containe all the data)
+```{r}
+col_odd_GSE110223 <- seq_len(ncol(GSE110223)) %% 2
+control_GSE110223 <- GSE110223[, col_odd_GSE110223 == 1]
+tumor_GSE110223 <- GSE110223[,col_odd_GSE110223 == 0]
+
+col_odd_GSE110224 <- seq_len(ncol(GSE110224)) %% 2
+control_GSE110224 <- GSE110224[, col_odd_GSE110223 == 1]
+tumor_GSE110224 <- GSE110224[,col_odd_GSE110223 == 0]
+
+```
+
+Create a merged dataframe with the first 30 samples are tumor and the second 30 are  
+```{r}
+control <- merge(control_GSE110223,control_GSE110224, by = 'row.names',all = F) # first 13 columns from GSE110223, and the last 17 from GSE110224
+tumor <- merge(tumor_GSE110223,tumor_GSE110224, by = 'row.names', all =F)# first 13 columns from GSE110223, and the last 17 from GSE110224
+
+total <- merge(control,tumor, by = 'Row.names', all = F) # first 30 columns and then 30 tumors 
+rownames(total) <- total$Row.names
+total$Row.names <- NULL
+
+png(file="images/boxplot_initial_data.png",width=600, height=350)
+boxplot(total, main = 'Boxplot of the initial data', col = c(rep('#6aaa96',30),rep('#de425b',30)), xlab = 'samples',ylab='values') 
+legend('bottomright',legend = c('Tumor','Control'),fill =c('#de425b','#6aaa96') , cex = 0.8)
+dev.off()
+```
+# normalize between two samples
+
+Let's apply some normalization! 
+
+*Normalization to a median of 0, scale normalization and Batch correction*
+
+• One of the simplest normalization strategies is to align the log values so that all channels have the same median
+
+• The value of the common median is not important for subsequent analyses.
+
+• A convenient choice is zero so that positive or negative values reflect signals above or below the median for a particular channel.
+
+• If negative normalized signal values seem confusing, any positive constant may be added to all values after normalization to zero medians.
+
+Try to apply batch effect correction 
+```{r}
+#creation of batch for tumor and control, so creation of the vectors for batch separation 
+batch_data<- c(rep(1,13),rep(2,17),rep(1,13),rep(2,17))
+
+
+# application of Combat-Seq and creation of adjusted dataframes 
+total <- as.data.frame(ComBat(dat=total, batch=batch_data, mod=NULL, par.prior=TRUE, prior.plots=FALSE))
+
+png(file="images/boxplot_combat_data.png",width=600, height=350)
+boxplot(total, main = 'Boxplot of initial data after batch correction', col = c(rep('#6aaa96',30),rep('#de425b',30)), xlab = 'samples',ylab='values')
+legend('bottomright',legend = c('Tumor','Control'),fill =c('#de425b','#6aaa96') , cex = 0.8)
+dev.off()
+```
+
+```{r}
+# # MEDIAN NORMALIZATION
+channel.medians=apply(total,2,median)
+total_median_norm=sweep(total,2,channel.medians,"-")
+
+total_median_norm <- scale(total_median_norm)
+
+# forse anche normalizazioen per grandezza box? non e' gia' fatta? 
+
+# boxplot post median normalization on ex
+png(file="images/boxplot_normalized_data.png",width=600, height=350)
+boxplot(total_median_norm, main = 'Boxplot of initial data after batch correction, median normalization and scale noramlization', col = c(rep('#6aaa96',30),rep('#de425b',30)), xlab = 'samples',ylab='values')
+legend('bottomright',legend = c('Tumor','Control'),fill =c('#de425b','#6aaa96') , cex = 0.8)
+dev.off()
+```
+Note that medians match but variation seems to differ a bit across channels, especially for the ones from different Set of GEO.
+
+
+More comparable after batch correction, ask gloria maybe better.
+
+
+-> Search a bit on GSE110225 -> example below: 
+GSE110225 is a dataset obtained from GEO. The data are obtained via expression profiling by array. Specifically, we are looking at transcriptional profiling of tumor tissues and normal tissues from CRC. The overall design is: Tumor tissues vs normal tissues, with a total of 30 biological replicates per condition. 
+
+
+*PCA* 
+```{r}
+pca <- prcomp(t(total_median_norm))
+summary(pca)
+screeplot(pca)
+```
+get the summary of the PCA, we get a table in which each column is a principal components and we have information on the standard deviation and the variation, etc
+
+```{r}
+head(get_eig(pca),10)
+#Eigenvalues correspond to the amount of the variation explained by each principal component (PC).
+fviz_eig(pca)
+```
+This plot show the variance explained by the first circa 10 components. The more than 70% of the variance is explained by the first 10 PC, and of these the first 3 PC explains the ~50% of the variance of the data. 
+
+order of genes by model contribution 
+```{r}
+ord_cont_genes_pca <- facto_summarize(pca, "var") %>%
+           arrange(desc(contrib))
+
+ord_cont_genes_pca
+```
+
+
+# draw PCA plot
+```{r}
+png(file="images/PCA_1.png",width=600, height=350)
+grpcol <- c(rep("#2173d2",30), rep('#de425b',30) ) # primi 30 controlli, seconid 30 tumori
+type<-c(rep("Controls", 30), rep("Tumors",30))
+plot(pca$x[,1], pca$x[,2], xlab="PCA1", ylab="PCA2", main="PCA for components 1 and 2", type="p", pch=10, col=grpcol) 
+text(pca$x[,1], pca$x[,2], rownames(pca$data), cex=0.75) 
+dev.off()
+```
+Now we look at the PCA with PLOTLY package, also try with 3D PCA 
+```{r}
+components<-pca$x
+components<-data.frame(components)
+
+components<-cbind(components,type)
+orig_data <- c(rep('GSE110223',13),rep('GSE110224',17),rep('GSE110223',13),rep('GSE110224',17))
+
+components2 <-cbind(components,orig_data)
+
+plot_ly(components2, x=~PC1, y=~PC2, color=type,colors=c('#2173d2','#de425b') ,type='scatter',mode='markers',symbol = ~orig_data, symbols = c('x','o'))
+```
+
+Let's try with the utilization of the 3 PC to see if we are able to see better differences between tumor and controls 
+```{r}
+fig2<-plot_ly(components2, x=~PC1, y=~PC2, z=~PC3,color=type ,colors=c('#2173d2','#de425b') ,mode='markers',marker = list(size = 4),symbol = ~orig_data, symbols = c('x','o')) 
+fig2
+
+```
+Commentary : PC1 seems distinguish between control and tumor, howevere there are some miss-classified samples
+
+# fare 2 PCA dei due distinti datasets 
+
+```{r}
+GSE110223_norm <- dplyr::select(as.data.frame(total_median_norm), 1:13,31:43)
+GSE110224_norm <- dplyr::select(as.data.frame(total_median_norm), 14:30,44:60)
+
+```
+#GSE110223
+```{r}
+pcaGSE110223 <- prcomp(t(GSE110223_norm))
+summary(pcaGSE110223)
+screeplot(pcaGSE110223)
+
+head(get_eig(pcaGSE110223),10)
+#Eigenvalues correspond to the amount of the variation explained by each principal component (PC).
+fviz_eig(pcaGSE110223)
+```
+
+Plot pca 
+```{r}
+componentsGSE110223<-pcaGSE110223$x
+componentsGSE110223<-data.frame(componentsGSE110223)
+typeGSE110223<-c(rep("Controls", 13), rep("Tumors",13))
+
+componentsGSE110223<-cbind(componentsGSE110223,typeGSE110223)
+
+figGSE110223<-plot_ly(componentsGSE110223, x=~PC1, y=~PC2, color=typeGSE110223,colors=c('#2173d2','#de425b') ,type='scatter',mode='markers')
+
+```
+
+
+#GSE110224
+
+```{r}
+pcaGSE110224 <- prcomp(t(GSE110224_norm))
+summary(pcaGSE110224)
+screeplot(pcaGSE110224)
+
+head(get_eig(pcaGSE110224),10)
+#Eigenvalues correspond to the amount of the variation explained by each principal component (PC).
+fviz_eig(pcaGSE110224)
+```
+Plot pca 
+```{r}
+componentsGSE110224<-pcaGSE110224$x
+componentsGSE110224<-data.frame(componentsGSE110224)
+typeGSE110224<-c(rep("Controls", 17), rep("Tumors",17))
+
+componentsGSE110224<-cbind(componentsGSE110224,typeGSE110224)
+
+figGSE110224<-plot_ly(componentsGSE110224, x=~PC1, y=~PC2, color=typeGSE110224,colors=c('#2173d2','#de425b') ,type='scatter',mode='markers')
+
+```
+
+Final
+```{r}
+final_pca<- subplot(figGSE110223, figGSE110224, shareX = T, shareY = T) %>% 
+  layout(title = 'Side By Side PCAs' ,plot_bgcolor='#e5ecf6')
+final_pca
+
+```
+
+
+```{r}
+setted_seed <- 1234
+```
+
+
+Now, let's move to data clustering. Clustering is a technique for finding **similarity groups** in data, called **clusters**. I.e.,it groups data instances that are similar to (near) each other in one cluster and data instances that are very different (far away) from each other into different clusters.
+
+Clustering is often called an **unsupervised learning** method as no class values denoting an a priori grouping of the data instances are given, which is the case in supervised learning.
+
+**METHOD 1**: K-means
+
+- K-means is a partitional clustering algorithm
+- You need to be able to compute a distance between points (distance matrix), i.e. euclidean distance
+- Let the set of data points (or instances) D be $\{x_1, x_2 , ..., x_n\}$, where $xi = (x_{i1} , x_{i2} , ..., x_{ir})$ is a **vector** in a real-valued space $X \subseteq R^r$, and $r$ is the number of attributes (dimensions) in the data.
+- The k-means algorithm partitions the given data into k clusters.
+    - Each cluster has a cluster **center**, called **centroid**.
+    - k is specified by the user.
+    
+Given k, the k-means algorithm works as follows:
+1. Randomly choose k data points (**seeds**) to be the initial **centroids**, cluster centers
+2. Assign each data point to the closest **centroid**
+3. Re-compute the **centroids** using the current cluster memberships.
+4. If a convergence criterion is not met, go to (2.).
+
+```{r}
+set.seed(seed = setted_seed)
+k <- 2 # I need to choose K a priori, but i know that i have tumor vs control data
+kmeans_result <- kmeans(t(total_median_norm), k)
+table(kmeans_result$cluster,type) 
+
+# Note that the cluster visualization is not trivial (space of 7815 dimensions!). We use the <- ? 
+# plot function in the ‘useful’ package that performs a dimensionality reduction using PCA
+
+#plot(kmeans_result, data=t(ex)) #+ geom_text(aes(label=colnames(ex)),hjust=0,vjust=0)
+
+# plot using factoextra package <- perche' si e' scelto questo? Dove lo hai trovato? 
+fviz_cluster(kmeans_result, data = t(total_median_norm),
+             palette = c('#2173d2','#de425b') , 
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw()
+             ) + 
+    stat_mean(aes(color = cluster), size = 4)
+
+# plot using ggpubr package
+
+# Coordinates of individuals
+ind.coord <- as.data.frame(get_pca_ind(pca)$coord)
+# Add clusters obtained using the K-means algorithm
+ind.coord$cluster <- factor(kmeans_result$cluster)
+# Add type groups (Controls or Tumoral samples) from the original data set
+ind.coord$Type <- type
+# Data inspection
+head(ind.coord)
+# Percentage of variance explained by dimensions
+eigenvalue <- round(get_eigenvalue(pca), 1)
+variance.percent <- eigenvalue$variance.percent
+head(eigenvalue)
+
+# Visualize k-means clusters
+# Color individuals according to the cluster groups
+# Change point shapes according to the Species groups (ground truth of grouping)
+# Add concentration ellipses
+# Add cluster centroid using the stat_mean() [ggpubr] R function
+
+# png(file="images/k_mean.png",width=600, height=350)
+ggscatter(
+  ind.coord, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex",
+  shape = "Type", size = 2,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) + stat_mean(aes(color = cluster), size = 5)
+# dev.off()
+
+
+######## Aggiungo informazioni origine dati 
+type_2 <- c(rep('Control1',13),rep('Control2',17),rep('Tumor1',13),rep('Tumor2',17))
+
+table(kmeans_result$cluster,type_2)
+
+ind.coord_2 <- ind.coord
+ind.coord_2$Type <- type_2
+# Data inspection
+head(ind.coord_2)
+# Percentage of variance explained by dimensions
+eigenvalue_2 <- round(get_eigenvalue(pca), 1)
+variance.percent_2<- eigenvalue_2$variance.percent
+head(eigenvalue_2)
+
+# png(file="images/k_mean2.png",width=600, height=350)
+ggscatter(
+  ind.coord_2, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex",
+  shape = "Type", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) + stat_mean(aes(color = cluster), size = 5)
+# dev.off()
+
+```
+
+**Hierarchical Clustering** is another clustering method based on a distance matrix.
+
+It produces a nested sequence of clusters, a **tree**, also called **Dendrogram**.
+
+There are two types of hierarchical clustering:
+**1. Agglomerative (bottom up) clustering**: It starts with one cluster for each data points
+- merges the most similar (or nearest) pair of clusters
+- stops when all the data points are merged into a single cluster (i.e., the root cluster).
+
+**2. Divisive (top down) clustering**: It starts with all data points in one cluster, the root
+- Splits the root into a set of child clusters. Each child cluster is recursively divided further
+- stops when only singleton clusters of individual data points remain, i.e., each cluster with only a single point
+
+STEP 1: determination optimal number of clusters -> meaby not 
+```{r}
+# Elbow method
+fviz_nbclust(t(total_median_norm), FUN = hcut, method = "wss") 
+## seems setting number of clusters equal to 2
+
+# Silhouette method
+fviz_nbclust(t(total_median_norm), FUN = hcut, method = "silhouette")
+## seems setting number of clusters equal to 2
+
+
+# Gap Statistic Method
+gap_stat <- clusGap(t(total_median_norm), FUN = hcut, nstart = 25, K.max = 10, B = 50)
+fviz_gap_stat(gap_stat)
+# 4. maybe sees the clusters also based on the 
+```
+
+# HIERARCHICAL
+with k = 2
+```{r}
+hc_result <- dist(t(total_median_norm)) %>% hclust(method = "ave")
+hc_result2<- dist(t(total_median_norm), method="euclidean") %>% hclust( method = "complete") 
+hc_result3 <- dist(t(total_median_norm)) %>% hclust(method = 'single')
+
+k_hc <- 2
+
+groups <- cutree(hc_result, k=k_hc)
+table(groups,type)
+
+groups2<-cutree(hc_result2, k=k_hc)
+table(groups2,type)
+
+groups3 <- cutree(hc_result3,k=k_hc)
+table(groups3,type)
+
+plot(hc_result, hang <- -1, labels=type, main = 'Hierarchical clustering dendrogram, averege')
+rect.hclust(hc_result, k = 2, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+
+plot(hc_result2, hang <- -1, labels=type, main = 'Hierarchical clustering dendrogram, complete')
+rect.hclust(hc_result2, k = 2, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+
+plot(hc_result3, hang <- -1, labels=type, main = 'Hierarchical clustering dendrogram, single')
+rect.hclust(hc_result3, k = 2, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+
+```
+
+With k = 6, per anche eterogeneita del tumore 
+```{r}
+k_hc_3<- 6
+
+groups7 <- cutree(hc_result, k=k_hc_3)
+groups8 <- cutree(hc_result2, k=k_hc_3)
+groups9 <- cutree(hc_result3,k = k_hc_3)
+
+table(groups7,type)
+table(groups8,type)
+table(groups9,type)
+
+
+plot(hc_result, hang <- -1, labels=type, main = 'Hierarchical clustering dendrogram, averege')
+rect.hclust(hc_result, k =k_hc_3, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+
+plot(hc_result2, hang <- -1, labels=type, main = 'Hierarchical clustering dendrogram, complete')
+rect.hclust(hc_result2, k = k_hc_3, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+
+plot(hc_result3, hang <- -1, labels=type, main = 'Hierarchical clustering dendrogram, single')
+rect.hclust(hc_result3, k = k_hc_3, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+```
+Seems to clustering not too bad, exept for a single Control which is cluster alone, but maybe is able to distinguish from the data the two datasets, let's check 
+```{r}
+type_2 <- c(rep('Control1',13),rep('Control2',17),rep('Tumor1',13),rep('Tumor2',17))
+
+plot(hc_result, hang <- -1, labels=type_2)
+rect.hclust(hc_result, k = k_hc_3, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+
+# png(filename = 'images/h_clust_6_2.png',width=600, height=350)
+plot(hc_result2, hang <- -1, labels=type_2)
+rect.hclust(hc_result2, k = k_hc_3, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+# dev.off()
+
+plot(hc_result3, hang <- -1, labels=type_2, main = 'Hierarchical clustering dendrogram, single')
+rect.hclust(hc_result3, k = k_hc_3, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+```
+
+Feature selection:
+
+keep only probes that have a significant difference in at least one of the comparison, I'm going to try t-test which is a parametric test and also Wilcoxon rank sum test 
+
+*t-test*
+Control vs Tumor 
+```{r}
+f <- factor(type)
+tt_samples <- rowttests(total_median_norm,f) # f is for the group! 
+
+# we wont to retain only the genes thata have a p value of 0.01 or lower with 7,430, with 0.001 the genes are 4,944 
+keep <- which(tt_samples$p.value < 0.001)
+
+
+tt_samples_filtered <- total_median_norm[keep,]
+```
+
+
+
+
+# Supervised Learning Methods
+After the feature selection let's use the selected genes for supervised machine learning methods.
+In my case, I will use one Set of Data as train end the other one as the test. 
+
+
+
+Tunning algorithm is important in building modeling. In random forest model, you can not pre-understand your result because your model are randomly processing. Tuning algorithm will help you control training process and gain better result. In this study, we will focus on two main tuning parameters in random forest model is mtry and ntree. Beside, there are many other method but these two parameters perhaps most likely have biggest affect to model accuracy.
+
+mtry: Number of variable is randomly collected to be sampled at each split time.
+
+ntree: Number of branches will grow after each time split.
+
+
+#### Accuracy and Kappa
+These are the default metrics used to evaluate algorithms on binary and multi-class classification datasets in caret.
+
+Accuracy is the percentage of correctly classifies instances out of all instances. It is more useful on a binary classification than multi-class classification problems because it can be less clear exactly how the accuracy breaks down across those classes (e.g. you need to go deeper with a confusion matrix).
+
+Kappa or Cohen’s Kappa is like classification accuracy, except that it is normalized at the baseline of random chance on your dataset. It is a more useful measure to use on problems that have an imbalance in the classes (e.g. 70-30 split for classes 0 and 1 and you can achieve 70% accuracy by predicting all instances are for class 0).
+*Random-forest* 
+1. Using data from t-test feature selection 
+```{r}
+e.mat_ttest <- 2^(tt_samples_filtered) # we need a large expressionSet
+# Genefilter package is very useful to preprocess data
+# here we remove genes whose value is not > 0 in at least 20% of the samples -> based on what??
+# filter genes on raw scale, then return to log scale;
+ffun <- filterfun(pOverA(0.20,0.0))
+
+t.fil_ttest <- genefilter(e.mat_ttest,ffun) # here is the filtering 
+
+small.eset_ttest <- log2(e.mat_ttest[t.fil_ttest,])
+
+# Alternative simpler method if you don’t need the complexity of genefilter
+small.eset_ttest_2 <- log2(na.omit(e.mat_ttest))
+
+dim(small.eset_ttest) 
+dim(small.eset_ttest_2)
+
+# same result in both cases (6901 gene for 60 samples, 30 control and 30 tumor)
+
+# train correspond to samples of the dataset GSE110224 (17 tumor and 17 control)
+names_samples_train <- c(colnames(control_GSE110224),colnames(tumor_GSE110224))
+# test correspond to samples of the dataset GSE110223 (13 tumor and 13 control)
+names_samples_test <- c(colnames(control_GSE110223),colnames(tumor_GSE110223))
+
+
+
+# Then I create the two subset that I will, train and test
+
+train_ttest <- data.frame(small.eset_ttest) %>% dplyr::select(all_of(names_samples_train))
+test_ttest <-data.frame(small.eset_ttest) %>% dplyr::select(all_of(names_samples_test))
+
+```
+
+```{r}
+group_GSE110224 <- c(rep("Controls", 17), rep("Tumors",17)) # classification, in order -> ho trainato con quello da  34 samples
+
+set.seed(seed = setted_seed)
+
+# Build RF
+# png(file="images/OBB_mtry.png",width=600, height=350)
+tuneRF(x=t(train_ttest), y=as.factor(group_GSE110224))
+# dev.off()
+
+
+rf_tets <- randomForest(x=t(train_ttest), y=as.factor(group_GSE110224), ntree=1000, mtry =35) # fa bootstrapping
+# I tried wiht 500, 1500, 10000 and and with every plot there is a stabilization of the curve at number of tree higher than 500 but lower than 1500
+
+# useful graphs
+# png(file="images/rf_test.png",width=600, height=350)
+plot(rf_tets)
+# dev.off()
+
+# a trivial test
+ predicted <- predict(rf_tets, t(test_ttest))
+ predicted
+# by using the Test set, the model is able to assign the right class on the majority of the samples (2 misclassificaton, 24 right classification)
+# Everything perfect exept for GSM2982922 classified as Tumor but Control and GSM2982923 classified as Control but Tumor
+
+
+# let's see the importance of the genes for the model 
+imp_ttest <- importance(rf_tets)
+impsor_ttest <- sort(imp_ttest[, 1], decreasing=TRUE)
+plot(impsor_ttest) 
+```
+<!-- mtry = 70  OOB error = 23.53%  -->
+<!-- Searching left ... -->
+<!-- mtry = 35 	OOB error = 20.59%  -->
+<!-- 0.125 0.05  -->
+<!-- mtry = 18 	OOB error = 26.47%  -->
+<!-- -0.2857143 0.05  -->
+<!-- Searching right ... -->
+<!-- mtry = 140 	OOB error = 23.53%  -->
+<!-- -0.1428571 0.05  -->
+
+Heatmap
+
+```{r}
+# Look at variable importance
+imp.temp <- abs(rf_tets$importance[,])
+t <- order(imp.temp,decreasing=TRUE)
+plot(c(1:nrow(train_ttest)),imp.temp[t],log='x',cex.main=1.5, xlab='gene rank',ylab='variable importance',cex.lab=1.5, pch=16,main='ALL subset results')
+# Get subset of expression values for 25 most 'important' genes
+gn.imp <- names(imp.temp)[t]
+gn.25 <- gn.imp[1:25] # vector of top 25 genes, in order
+t <- is.element(rownames(train_ttest),gn.25)
+sig.eset <- train_ttest[t,] # matrix of expression values, not necessarily in order
+
+
+## Make a heatmap, with group differences obvious on plot
+library(RColorBrewer)
+hmcol <- colorRampPalette(brewer.pal(11,"PuOr"))(256)
+colnames(sig.eset) <- group_GSE110224 # This will label the heatmap columns
+csc <- rep(hmcol[50],34)
+csc[group_GSE110224=='Tumors'] <- hmcol[200]
+# column side color will be purple for T and orange for B
+heatmap(as.matrix(sig.eset), scale="row", col=hmcol, ColSideColors=csc)
+```
+
+I WILL USE IN THE REPORT THE FIGURE OF THE DECREASING ERROR (OOB) AS THE NUMBER OF TREES GETS BIGGER
+
+NOW we use caret, and it is the most important part for the machine learning packages/results to report.
+Here under is the code to understand how the package works
+
+```{r}
+library(caret)
+controllo <- trainControl(method = "cv", number=3, classProbs= T)
+tuneGrid <- expand.grid(mtry=20:50) # We also can define a grid of algorithm to tunning model. Each axis of grid is an algorithm parameter and point in grid are specific combinations of parameter.
+train_model<-train(x=t(train_ttest), y=as.factor(group_GSE110224), num.trees=1000, method="rf", trControl = controllo,
+                   tuneGrid = tuneGrid) ## BEST MTRY=32! look at the model to see the best mtry
+train_model$results
+plot(train_model) #We can see the highest accuracy when mtry diverso da 38 e 46
+# guarda confusion matrix di cart
+pippo <- varImp(train_model) # extract the most important variables for the Random Forest
+
+impsor <- sort(pippo$importance$Overall, decreasing=TRUE)
+hist(impsor, breaks=c(0,5,10,15,20,25,30,35,40,45,50,60,70,100), freq=TRUE, xlab="Variable Importance", main="RF VarImp distribution")
+hist(impsor, breaks=5)
+hist(impsor)
+plot(pippo, main="Var per RF", top= 20)
+```
+To understand the name of the gene use this tool: https://david.ncifcrf.gov/list.jsp
+
+# Measuring performance 
+Not explained by professor, ghere for fun.
+
+We can compute the confusion matrix, which shows a cross-tabulation of the observed and predicted classes. The confusionMatrix function can be used to generate these results:
+
+Possiamo vedere dalla confuzion matrix qui sotto che ho un mislabaling -> sbaglio una predizione, in patrticolare un controllo viene catalogato come tumore. Ho un accuratezza dello 1 e un Kappa di 1. 
+
+McNemar’s Test captures the errors made by both models. Specifically, the No/Yes and Yes/No (A/B and B/A in your case) cells in the confusion matrix. The test checks if there is a significant difference between the counts in these two cells. That is all.
+
+First of all, it is important to know that there are two different scenarios in the context of machine learning. The first one is that you are evaluating the quality of your model vs. the reference data (test data or possibly training data). The second scenario is when you are comparing two classification models (algorithms).
+
+In the first scenario you would normally look for the p-value of the test to be greater than 0.05. That is, do not reject the null hypothesis that assumes homogeneity of the proportion of misclassified cases for the two class labels. In your confusion matrix above, these proportions are calculated from cells AB and BA. A significant value here would indicate that your algorithm misclassifies one label more than another.
+
+In summary: what McNemar's theoretically calls marginal homogeneity is, in the first scenario, the homogeneity of the rate of misclassifying the two class labels.
+
+No Information Rate (NIR): the accuracy that could be obtained by always predicting the majority class (class Controls in this case).
+
+P-Value [Acc > NIR]: the p-value for a statistical test comparing the accuracy of the model to the NIR. A small p-value (typically less than 0.05) indicates that the model’s accuracy is significantly better than the NIR.
+
+Balanced Accuracy: the average of sensitivity and specificity, providing a balanced assessment of the model’s performance across both classes.
+
+```{r}
+group_GSE110223 <- c(rep("Controls", 13), rep("Tumors",13))
+confusionMatrix(data = predicted, reference = factor(group_GSE110223))
+```
+
+
+# LDA
+
+Linear discriminant analysis is a method you can use when you have a set of predictor variables and you’d like to classify a response variable into two or more classes.
+```{r}
+# Next, we’ll use the lda() function from the MASS package to fit the LDA model to our data:
+library("MASS")
+# discriminant analysis
+trasv_select_GSE110224 <- t(train_ttest)
+trasv_select_GSE110223 <- t(test_ttest)
+
+dat_train <- cbind(as.data.frame(trasv_select_GSE110224),factor(typeGSE110224)) # 34 rows
+dat_test <- cbind(as.data.frame(trasv_select_GSE110223),factor(typeGSE110223)) # 26 rows
+
+colnames(dat_train)[ncol(dat_train)] <- "Type"
+colnames(dat_test)[ncol(dat_test)] <- "Type"
+
+mod <- lda(Type ~ ., data=dat_train, prior = c(0.5,0.5))
+
+# Stacked histogram for discriminant function values.
+plot(mod) #  We can see that there are some minor overlap between the first and second species (Tumor and Controls).
+
+# Once we’ve fit the model using our training data, we can use it to make predictions on our test data:
+mod.values <- predict(mod, dat_test)
+mod.values$class # #view predicted class -> we have one missclassification
+
+# plot the predicted samples using the lda model, dividing in tumor and controls. We should be able to see the two classes separated over the y axis but here we can see that the last tumoral sample is in the y region of the controls
+plot(mod.values$x[,1], ylab=c("LDA Axis"), col=c(rep("cadetblue1",13), rep("red",13)), pch = 19)
+legend(2, 4, legend=c("Controls", "Tumors"), fill = c("cadetblue1","red") )
+
+table(as.numeric(mod.values$class), as.numeric(dat_test$Type) )  # made by hand
+confusionMatrix(data = mod.values$class, reference = dat_test$Type) # with confusionMatrix
+# We have an accuracy of 0.9231 and a Kappa of 0.8462 
+
+#We can use the following code to see what percentage of observations the LDA model correctly predicted
+mean(mod.values$class==dat_test$Type) # predicted accurately the 90% of the samples
+
+```
+
+### THIRD/FOURTH MACHINE-LEARNING METHOD: LASSO AND RIDGE ###
+
+# First try with tselected3 -> obtained from rowttest
+# Second try using the selected obtained from LIMMA
+
+Un altro pacchetto, più recente, è glmnet che consente di stimare un modello con regolarizzazione tramite la
+funzione glmnet. Il default è α = 1 che significa LASSO, con α = 0 si ha regressione Ridge. alpha is for the elastic net mixing parameter α, with range α∈[0,1]
+. α=1 is lasso regression (default) and α=0 is ridge regression.
+
+The command loads an input matrix x and a response vector y from this saved R data archive.
+
+We fit the model using the most basic call to glmnet
+
+fit is an object of class glmnet that contains all the relevant information of the fitted model for further use. We do not encourage users to extract the components directly. Instead, various methods are provided for the object such as plot, print, coef and predict that enable us to execute those tasks more elegantly.
+
+```{r}
+library(glmnet)
+
+# LASSO 
+fit=glmnet(t(train_ttest),typeGSE110224,standardize=FALSE,family="binomial", alpha=1)
+plot(fit)
+cfit=cv.glmnet(t(train_ttest),typeGSE110224,standardize=FALSE,family="binomial", alpha=1)
+plot(cfit)
+predict(fit,t(test_ttest), type="class", s= cfit$lambda.min)
+
+
+#RIDGE
+fit_2=glmnet(t(train_ttest),typeGSE110224,standardize=FALSE,family="binomial", alpha=0)
+plot(fit_2)
+cfit_2=cv.glmnet(t(train_ttest),typeGSE110224,standardize=FALSE,family="binomial", alpha=0)
+plot(cfit_2)
+predict(fit_2,t(test_ttest), type="class", s= cfit_2$lambda.min)
+
+
+```
+
+### LAST MACHINE-LEARNING METHOD: With SCUDO ###
+
+scudoTrain: Given a set of expression profiles with known classification, scudoTrain computes a list of signatures composed of genes over- and under-expressed in each sample. It also compute consensus
+signatures for each group and uses the signatures to compute a distance matrix that quantifies the
+similarity between the signatures of pairs of samples.
+
+```{r}
+library(rScudo)
+
+#install.packages("igraph")
+
+library(igraph)
+set.seed(seed = setted_seed)
+
+# non capisco coem fare tunning parametri 
+
+#inTrain <- createDataPartition(group, list = FALSE)
+#trainData <- as.data.frame(t(dat[inTrain,1:1987])) # i need to remove the last row cause it is the groups!
+#testData <- as.data.frame(t(dat[-inTrain,1:1987]))
+trainData<-as.data.frame(train_ttest) # i need to remove the last row cause it is the groups!
+testData<-as.data.frame(test_ttest)
+
+# analyze training set
+trainRes <- scudoTrain(trainData, groups = factor(typeGSE110224),nTop = 100, nBottom = 100, alpha = 0.05)
+
+trainRes
+# inspect signatures
+UP_scudo<-upSignatures(trainRes)[1:5,1:5]
+UP_scudo
+Consensu_scudo<-consensusUpSignatures(trainRes)[1:5, ]
+Consensu_scudo
+# generate and plot map of training samples
+trainNet <- scudoNetwork(trainRes, N = 0.25) #
+# png(filename = 'images/SCUDO_train.png',width=600, height=350)
+scudoPlot(trainNet, vertex.label = NA, col=factor(typeGSE110224))
+# dev.off()
+# perform validation using testing samples
+testRes <- scudoTest(trainRes, testData, factor(typeGSE110223), nTop = 100, nBottom = 100)
+testNet <- scudoNetwork(testRes, N = 0.25)
+# png(filename = 'images/SCUDO_test.png',width=600, height=350)
+scudoPlot(testNet, vertex.label = NA, col=factor(typeGSE110223))
+# dev.off()
+```
+#CARET
+```{r}
+library(caret)
+library(rScudo)
+
+metric <- "Accuracy" # metrica piu importante
+control <- trainControl(method = "repeatedcv", repeats = 10) # dico il metodo di cross validation
+
+# fit.rf <- caret::train(x= t(train_ttest), y= factor(typeGSE110224), method="rf", metric=metric, trControl=control)
+tunegrid <- expand.grid(.mtry=35)
+fit.rf  <- train(Type~.,
+                      data=dat_train,
+                      method='rf',
+                      metric=metric,
+                      tuneGrid=tunegrid,
+                      trControl=control)
+
+fit.lda <- train(Type ~ ., data=dat_train, method="lda", metric=metric, trControl=control)
+
+fit.lasso <- train(Type~., data=dat_train, method="glmnet", family = "binomial", TuneGrid = expand.grid(alpha = 1,lambda = seq(0,1,by=0.05)), trControl = control, metric = metric) 
+
+fit.ridge <- train(Type~., data=dat_train, method="glmnet", family = "binomial", TuneGrid = expand.grid(alpha = 0,lambda = seq(0,1,by=0.05)), trControl = control, metric = metric)
+
+# model <- scudoModel(nTop = (2:50)*50, nBottom = (2:50)*50, N = 0.25)
+# cvRes <- caret::train(x=t(train_ttest), y=typeGSE110224, method = model, trControl = control)
+
+model_final <- scudoModel(nTop = 100, nBottom = 100, N = 0.25,maxDist = 1, weighted = TRUE, complete = FALSE, beta = 1)
+scudo_train <- caret::train(Type~., data=dat_train, method=model_final, trControl = control, metric = metric)
+
+results <- resamples(list(LDA=fit.lda, RF=fit.rf, LASSO=fit.lasso, RIDGE=fit.ridge, SCUDO=scudo_train))
+
+png(filename = 'images/Accuracy.png',width=600, height=350)
+ggplot(results) + labs(y = "Accuracy")
+dev.off()
+```
+
+The best method based on the accuracy is Random Forest 
+
+#Extraction of the most improtant features of RF
+
+```{r}
+pippo_RF<-varImp(fit.rf)
+impsor <- sort(pippo_RF$importance$Overall, decreasing=TRUE)
+png(filename = 'images/RF_varimp.png',width=600, height=350)
+hist(impsor, breaks=c(0,5,10,15,20,25,30,35,40,45,50,60,70,100), freq=TRUE, xlab="Variable Importance", main="RF VarImp distribution")
+dev.off()
+
+png(filename = 'images/RF_importance.png',width=600, height=350)
+plot(pippo_RF, main="Var per RF", top= 20)
+dev.off()
+```
+### Converting the IDs ###
+
+IMPORTANT: download annotation for a specific chip –
+NB You need to search the correct annotation for based on the methodology used to create your chip!
+
+```{r}
+#
+# BiocManager::install("hgu133a.db")
+library("hgu133a.db")
+# extract map of interest (probeID to GENE SYMBOL)
+my.map <- hgu133aSYMBOL
+# not all probeID have a mapping (ie an annotation)
+mapped.probes <- mappedkeys(my.map)
+# get Entrez ID for the Affy ID of interest (ie. first five)
+my.symbols <- as.data.frame(my.map[mapped.probes])
+# inspect result
+my.symbols[1:10,]
+
+# Select the most important genes for the RF model, I decided to select the ones that have overall importance major than 20
+paperino <- as.data.frame(pippo$importance)
+
+important_RF<-paperino[paperino$Overall>30,] # important_RF contains teh importance for teh corrispective gene names that are in names_RF
+# extract the rownames
+names_RF<-rownames(paperino)[paperino$Overall>30] # we have 291 probe ID
+
+# check what other maps are available
+#ls("package:hgug4112a.db")
+
+# MAP MY STAT IDS INTO GENE SYMBOL
+
+# my.names_stats<-as.data.frame(my.symbols$symbol[my.symbols$probe_id %in% rownames(stats)])
+
+my.names_RF<-as.data.frame(my.symbols$symbol[my.symbols$probe_id %in% names_RF]) # 277 genes
+
+
+write.table(my.names_RF,  "nomi_RF.txt", row.names = FALSE, sep="\n", quote=FALSE) 
+
+```
+Those genes are then used as input for:
+- DAVID (Over-representation anlysis)
+- ENRICHNET (network based data analysis)
+- STRING (network based data analysis)
+
+#gprofiler
+
+```{r}
+library(gprofiler2)
+
+# see vignette at https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
+gostres_RF <- gost(query = c(my.names_RF$`my.symbols$symbol[my.symbols$probe_id %in% names_RF]`), organism = "hsapiens", ordered_query = TRUE, multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, measure_underrepresentation = FALSE, evcodes = FALSE, user_threshold = 0.05, correction_method = "g_SCS", domain_scope = "annotated", custom_bg = NULL, numeric_ns = "", sources = NULL, as_short_link = FALSE)
+
+
+
+# CHE SCHIFO R
+names(gostres_RF)
+head(gostres_RF$result)
+
+
+table(gostres_RF$result$source)
+# CORUM GO:BP GO:CC GO:MF   HPA  KEGG MIRNA  REAC    TF    WP 
+#     1    75    22    10    43     2     8     4    12     4 
+
+
+
+sorted_RF<-sort(gostres_RF$result$p_value)
+
+# extract the first top 5 terms for teh p-value and use them in the gostplot to highligt them
+to_highlight_RF<-head(sorted_RF,10)
+highligted_RF<-gostres_RF$result[gostres_RF$result$p_value %in% to_highlight_RF,]
+
+# visualize results using a Manhattan plot
+gostplot(gostres_RF, capped = TRUE, interactive = TRUE)
+
+# when ready, create publication quality (static) plot + table of interesting terms/pathways
+# under save thegostplot in p
+p_RF <- gostplot(gostres_RF, capped = TRUE, interactive = FALSE)
+# selected the first two terms (taken from the head(gostres2$result)) that have the highest pval and good pvalue (under 0.05). 
+# The proportion of genes in the input list that are annotated to the function. Defined as intersection_size/query_size.
+# FOR MORE INFO ON TEH OUTPUT LOOK AT: https://biit.cs.ut.ee/gprofiler/page/apis
+publish_gostplot(p_RF, highlight_terms = c(highligted_RF$term_id),width = NA, height = NA, filename = NULL )
+```
+
+#pathfinder
+
+```{r}
+#BiocManager::install("KEGGREST")
+#BiocManager::install("KEGGgraph")
+#BiocManager::install("AnnotationDbi")
+#BiocManager::install("org.Hs.eg.db")
+library(KEGGREST)
+library(KEGGgraph)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+
+# install.packages('pathfindR')
+library (pathfindR)
+# VA AGGIORNATO R ma non mi fido da sola
+BiocManager::install("ggkegg")
+library(ggkegg)
+# install.packages("magick")
+library(magick)
+
+```
+# LIMMA And Pathfinder
+
+Due to the changes of the library of pathfinder the function need a file with logFC and adj.p-val, so there is the need to use LIMMA 
+
+```{r}
+if (!("limma" %in% installed.packages())) {
+  # Install this package if it isn't installed yet
+  BiocManager::install("limma", update = FALSE)
+}
+
+library(limma)
+
+design <- model.matrix(~0+type)
+colnames(design) <- c("Control","Tumor")
+rownames(design) <- colnames(total_median_norm)
+
+fit <- lmFit(total_median_norm,design)
+cont.matrix <- makeContrasts(contrasts = "Tumor-Control", levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+
+fit2 <- eBayes(fit2)
+all_deg<-topTable(fit2, adjust="BH", number=Inf)
+
+```
+
+Run pathfinder 
+```{r}
+data_path<-as.data.frame(my.names_RF)
+my.symbols_2 <- names_RF[names_RF %in% my.symbols$probe_id]
+
+data_path<-cbind(data_path,all_deg$logFC[rownames(all_deg) %in% my.symbols_2])
+data_path<-cbind(data_path,all_deg$adj.P.Val[rownames(all_deg) %in% my.symbols_2])
+dim(data_path)
+colnames(data_path)<-c("GENE", "CHANGE", "P_VALUE")
+head(data_path)
+RA_input<-data_path
+
+```
+
+```{r}
+
+#KEGG
+pathfindR_results <- run_pathfindR(RA_input, iterations = 1, gene_sets = "KEGG")
+pathfindR_cluster <- cluster_enriched_terms(pathfindR_results)
+term_gene_graph(pathfindR_results)
+
+
+#REACTOME
+png(filename = 'images/trail.png', width=600, height=350)
+pathfindR_results_2 <- run_pathfindR(RA_input, iterations = 1, gene_sets = "Reactome")
+dev.off()
+pathfindR_cluster_2 <- cluster_enriched_terms(pathfindR_results_2)
+term_gene_graph(pathfindR_results_2)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
