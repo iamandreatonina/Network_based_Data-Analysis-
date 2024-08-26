@@ -138,15 +138,6 @@ boxplot(total_median_norm, main = 'Boxplot of initial data after batch correctio
 legend('bottomright',legend = c('Tumor','Control'),fill =c('#de425b','#6aaa96') , cex = 0.8)
 dev.off()
 ```
-Note that medians match but variation seems to differ a bit across channels, especially for the ones from different Set of GEO.
-
-
-More comparable after batch correction, ask gloria maybe better.
-
-
--> Search a bit on GSE110225 -> example below: 
-GSE110225 is a dataset obtained from GEO. The data are obtained via expression profiling by array. Specifically, we are looking at transcriptional profiling of tumor tissues and normal tissues from CRC. The overall design is: Tumor tissues vs normal tissues, with a total of 30 biological replicates per condition. 
-
 
 *PCA* 
 ```{r}
