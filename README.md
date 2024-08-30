@@ -3,7 +3,7 @@
 Project for the Network-Based Data Analysis course held by Professor Mario Lauria (A.Y. 2023-2024).
 
 + [Code](https://github.com/iamandreatonina/Network_based_Data-Analysis-/tree/main/Code)
-+ [Report](https://github.com/iamandreatonina/Network_based_Data-Analysis-/tree/main/Report_%26_Presentation)
++ [Report and Presentation](https://github.com/iamandreatonina/Network_based_Data-Analysis-/tree/main/Report_%26_Presentation)
 
 
 ## Chosen disease 
