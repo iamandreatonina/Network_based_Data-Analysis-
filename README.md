@@ -16,7 +16,7 @@ From Gene Expression Omnibus (GEO), the dataset [GSE110225](https://www.ncbi.nlm
 
 ## Aim and Workflow
     
-This project aims to uncover new findings about Colorectal cancer (CRC) and seeks to advance the understanding of this tumor by establishing a set of variables capable of discriminating between cancer and normal samples. The workflow for this project can be summarized into three main steps:\
+This project aims to uncover new findings about Colorectal cancer (CRC) and seeks to advance the understanding of this tumor by establishing a set of variables capable of discriminating between cancer and normal samples. The workflow for this project can be summarized into three main steps:
   * **Exploratory Analysis**: In the first part of the workflow, an exploratory data analysis was performed using unsupervised methods.
       * Principal Component Analysis (PCA)
       * K-means clustering
